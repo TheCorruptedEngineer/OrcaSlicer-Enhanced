@@ -1417,6 +1417,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              tree_support_branch_angle_organic))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))
+    // Orca (Kurisu)
+    ((ConfigOptionBool,               continuous_modifier_walls))
 
     // Move all acceleration and jerk settings to object
     ((ConfigOptionFloatsNullable,           default_acceleration))

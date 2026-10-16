@@ -2946,6 +2946,7 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Walls"), L"param_wall");
         optgroup->append_single_option_line("wall_loops", "strength_settings_walls#wall-loops");
         optgroup->append_single_option_line("alternate_extra_wall", "strength_settings_walls#alternate-extra-wall");
+        optgroup->append_single_option_line("continuous_modifier_walls", "strength_settings_walls");
         optgroup->append_single_option_line("detect_thin_wall", "strength_settings_walls#detect-thin-wall");
         optgroup->append_single_option_line("staggered_perimeters", "staggered-perimeters-known-issues");
         optgroup->append_single_option_line("staggered_perimeter_flow_ratio", "staggered-perimeters-known-issues");

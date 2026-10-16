@@ -154,14 +154,16 @@ ExPolygons Layer::merged(float offset_scaled) const
     return out;
 }
 
-bool Layer::is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b)
+bool Layer::is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b, bool allow_wall_count_zones)
 {
     const PrintRegionConfig& config       = a.config();
     const PrintRegionConfig& other_config = b.config();
 
         return config.outer_wall_filament_id       == other_config.outer_wall_filament_id
 		&& config.inner_wall_filament_id       == other_config.inner_wall_filament_id
-		&& config.wall_loops                  == other_config.wall_loops
+		&& (config.wall_loops == other_config.wall_loops ||
+            // A 0-wall region asks for no outer wall either, which a shared outline cannot give it.
+            (allow_wall_count_zones && config.wall_loops > 0 && other_config.wall_loops > 0))
 		&& config.wall_sequence               == other_config.wall_sequence
         && config.loop_sequence               == other_config.loop_sequence
 		&& config.even_loops_flow_ratio       == other_config.even_loops_flow_ratio
@@ -218,6 +220,14 @@ void Layer::make_perimeters()
     // keep track of regions whose perimeters we have already generated
     std::vector<unsigned char> done(m_regions.size(), false);
 
+    // Orca (Kurisu): continuous_modifier_walls. Regions that differ only in wall count share one perimeter run, so
+    // their walls follow the island's outline instead of each region closing its own loops along the modifier's
+    // boundary (a seam on the surface and a double wall inside). Only the classic generator splits the wall
+    // count by area, see PerimeterGenerator::process_classic().
+    const PrintObjectConfig &object_config          = m_object->config();
+    const bool               allow_wall_count_zones = object_config.continuous_modifier_walls &&
+                                                      object_config.wall_generator == PerimeterGeneratorType::Classic;
+
     for (LayerRegionPtrs::iterator layerm = m_regions.begin(); layerm != m_regions.end(); ++ layerm)
     	if ((*layerm)->slices.empty()) {
  			(*layerm)->perimeters.clear();
@@ -244,7 +254,7 @@ void Layer::make_perimeters()
                     // this is a no-op for every other configuration.
                     if (this_region.gradient_volume_id() != other_region.gradient_volume_id())
                         continue;
-                    if (is_perimeter_compatible(*m_object->print(), this_region, other_region))
+                    if (is_perimeter_compatible(*m_object->print(), this_region, other_region, allow_wall_count_zones))
                     {
                         clear_generated_extrusions(other_layerm);
                         layerms.push_back(other_layerm);

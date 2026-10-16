@@ -6460,7 +6460,21 @@ void PrintConfigDef::init_fff_params()
                      "Using lightning infill together with this option is not recommended as there is limited infill to anchor the extra perimeters to.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
-    
+
+    // Orca (Kurisu): see Layer::make_perimeters() and the wall count zones in PerimeterGenerator::process_classic().
+    def = this->add("continuous_modifier_walls", coBool);
+    def->label = L("Continuous walls across modifiers");
+    def->category = L("Strength");
+    def->tooltip = L("When a modifier changes only the number of walls, keep the walls continuous across the modifier's boundary. "
+                     "The walls the zones share run around the part as if there was no modifier, and the extra walls of the zone "
+                     "asking for more end at the boundary.\n\n"
+                     "When disabled, each zone gets its own closed walls, which leaves a seam on the surface and a double wall "
+                     "inside the part along the modifier's boundary.\n\n"
+                     "Works with the Classic wall generator. Modifiers that also change other wall settings, or set 0 walls, "
+                     "keep their own walls.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("post_process", coStrings);
     def->label = L("Post-processing Scripts");
     def->tooltip = L("If you want to process the output G-code through custom scripts, "

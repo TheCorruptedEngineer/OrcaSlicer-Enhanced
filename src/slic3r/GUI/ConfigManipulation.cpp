@@ -1232,6 +1232,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
         "min_bead_width", "wall_distribution_count", "initial_layer_min_bead_width", "wall_maximum_resolution", "wall_maximum_deviation"})
         toggle_line(el, have_arachne);
     toggle_field("detect_thin_wall", !have_arachne);
+    // Orca (Kurisu): wall count zones are implemented in the classic generator only.
+    toggle_field("continuous_modifier_walls", !have_arachne);
 
     // Orca
     auto is_role_based_wipe_speed = config->opt_bool("role_based_wipe_speed");

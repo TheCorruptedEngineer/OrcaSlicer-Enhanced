@@ -228,7 +228,9 @@ public:
     }
 
     // Whether two regions can be printed in a continues perimeter
-    static bool             is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b);
+    // Orca (Kurisu): allow_wall_count_zones also accepts regions that differ only in a non-zero wall_loops;
+    // PerimeterGenerator::process_classic() then gives each region's area its own wall count.
+    static bool             is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b, bool allow_wall_count_zones = false);
     void                    make_perimeters();
     // Phony version of make_fills() without parameters for Perl integration only.
     void                    make_fills() { this->make_fills(nullptr); }

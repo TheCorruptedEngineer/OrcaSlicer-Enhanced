@@ -26,6 +26,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <map>
 #include <vector>
 
 #include "test_helpers.hpp"
@@ -992,5 +993,157 @@ TEST_CASE("A hole whose outer wall touches the contour's runs with it", "[Perime
         REQUIRE(layers[i].holes_ccw.size() == 1);
         CHECK(layers[i].contours_ccw.front() == ccw);
         CHECK(layers[i].holes_ccw.front() == ccw);
+    }
+}
+
+// Orca (Kurisu): continuous_modifier_walls.
+namespace {
+
+// A 20x20x5 block, optionally with a modifier over its right half (x >= 10) that sets `modifier_walls` walls.
+void slice_block(Print &print, Model &model, const DynamicPrintConfig &config_in, int modifier_walls)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.apply(config_in);
+    ModelObject *object = model.add_object();
+    object->name = "block.stl";
+    object->add_volume(TriangleMesh(its_make_cube(20., 20., 5.)), ModelVolumeType::MODEL_PART, false);
+    if (modifier_walls > 0) {
+        ModelVolume *modifier = object->add_volume(TriangleMesh(its_make_cube(10., 30., 5.)), ModelVolumeType::PARAMETER_MODIFIER, false);
+        modifier->set_offset(Vec3d(10., -5., 0.));
+        modifier->config.set("wall_loops", modifier_walls);
+    }
+    object->add_instance();
+    object->ensure_on_bed();
+    print.auto_assign_extruders(object);
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    print.process();
+}
+
+const Layer *layer_at(const Print &print, double print_z)
+{
+    for (const Layer *layer : print.objects().front()->layers())
+        if (std::abs(layer->print_z - print_z) < 1e-4)
+            return layer;
+    return nullptr;
+}
+
+// What the walls of one layer look like across the modifier's boundary, which is the block's middle.
+struct BlockWalls {
+    double outline_length       = 0.; // the layer's own outline
+    double outer_wall_length    = 0.;
+    // Walls crossing the line through the block's middle along X, left and right of the boundary.
+    int    left_crossings       = 0;
+    int    right_crossings      = 0;
+    // How far each half's infill stays from the block's side, keyed by that half's wall count.
+    std::map<int, double> fill_inset_by_walls;
+};
+
+BlockWalls block_walls(const Layer &layer)
+{
+    BlockWalls out;
+    BoundingBox bbox = get_extents(layer.lslices);
+    for (const ExPolygon &island : layer.lslices)
+        out.outline_length += unscaled(island.contour.length());
+    const double xc = 0.5 * double(bbox.min.x() + bbox.max.x());
+    const double yc = 0.5 * double(bbox.min.y() + bbox.max.y());
+    for (const LayerRegion *region : layer.regions()) {
+        for (const ExtrusionEntity *entity : region->perimeters.flatten().entities) {
+            if (entity->role() == erExternalPerimeter)
+                out.outer_wall_length += unscaled(entity->length());
+            const Polylines polylines = entity->as_polylines();
+            for (const Polyline &pl : polylines)
+                for (size_t i = 1; i < pl.points.size(); ++ i) {
+                    const Vec2d a = pl.points[i - 1].cast<double>(), b = pl.points[i].cast<double>();
+                    if ((a.y() - yc) * (b.y() - yc) < 0.) {
+                        const double x = a.x() + (b.x() - a.x()) * (yc - a.y()) / (b.y() - a.y());
+                        ++ (x < xc ? out.left_crossings : out.right_crossings);
+                    }
+                }
+        }
+        if (! region->fill_expolygons.empty()) {
+            const BoundingBox fill = get_extents(region->fill_expolygons);
+            // The left half's fill is measured from the left side, the right half's from the right side.
+            const bool left_half = 0.5 * double(fill.min.x() + fill.max.x()) < xc;
+            out.fill_inset_by_walls[region->region().config().wall_loops.value] =
+                unscaled(left_half ? fill.min.x() - bbox.min.x() : bbox.max.x() - fill.max.x());
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// A modifier that only changes the wall count must not wall off its boundary: the walls both halves share run
+// around the block as if there was no modifier, the half asking for more gets its extra walls ending at the
+// boundary, and each half fills from where a plain block with its wall count would. The unchecked option keeps
+// the stock behaviour - one closed set of walls per half, back to back along the boundary - and so does Arachne,
+// which the zones are not implemented for.
+TEST_CASE("A wall count modifier keeps the walls continuous across its boundary", "[Perimeters]")
+{
+    const char *wall_sequence = GENERATE("inner wall/outer wall", "outer wall/inner wall", "inner-outer-inner wall", "odd-even wall");
+    const auto  walls         = GENERATE(std::make_pair(3, 6), std::make_pair(6, 3));
+    const int   base_walls = walls.first, modifier_walls = walls.second;
+    CAPTURE(wall_sequence, base_walls, modifier_walls);
+
+    auto config_for = [&](const char *wall_generator, bool continuous) {
+        DynamicPrintConfig config = base_config(wall_generator);
+        config.set_deserialize_strict({
+            { "wall_loops",                base_walls },
+            { "wall_sequence",             wall_sequence },
+            { "continuous_modifier_walls", continuous },
+            { "top_shell_layers",          0 },
+            { "bottom_shell_layers",       0 },
+        });
+        return config;
+    };
+    auto walls_for = [&](const char *wall_generator, bool continuous, int modifier) {
+        Print print;
+        Model model;
+        slice_block(print, model, config_for(wall_generator, continuous), modifier);
+        REQUIRE_FALSE(print.objects().empty());
+        const Layer *layer = layer_at(print, 2.6);
+        REQUIRE(layer != nullptr);
+        return block_walls(*layer);
+    };
+
+    const BlockWalls on = walls_for("classic", true, modifier_walls);
+    const int left_walls = base_walls, right_walls = modifier_walls;
+
+    SECTION("one outer wall around the block") {
+        REQUIRE(on.outline_length > 0.);
+        CHECK(on.outer_wall_length < 1.05 * on.outline_length);
+    }
+    SECTION("each half keeps its own wall count, and none run along the boundary") {
+        CHECK(on.left_crossings == left_walls);
+        CHECK(on.right_crossings == right_walls);
+    }
+    SECTION("each half fills from where a plain block with its wall count does") {
+        // A plain block's fill inset is the same on both sides; read it off the left one.
+        auto plain_fill_inset = [&](int wall_loops) {
+            Print print;
+            Model model;
+            DynamicPrintConfig config = config_for("classic", true);
+            config.set_deserialize_strict({ { "wall_loops", wall_loops } });
+            slice_block(print, model, config, 0);
+            const Layer *layer = layer_at(print, 2.6);
+            REQUIRE(layer != nullptr);
+            return block_walls(*layer).fill_inset_by_walls.at(wall_loops);
+        };
+        REQUIRE(on.fill_inset_by_walls.count(base_walls) == 1);
+        REQUIRE(on.fill_inset_by_walls.count(modifier_walls) == 1);
+        CHECK_THAT(on.fill_inset_by_walls.at(base_walls),     Catch::Matchers::WithinAbs(plain_fill_inset(base_walls), 0.02));
+        CHECK_THAT(on.fill_inset_by_walls.at(modifier_walls), Catch::Matchers::WithinAbs(plain_fill_inset(modifier_walls), 0.02));
+    }
+    SECTION("unchecked, each half closes its own walls along the boundary") {
+        const BlockWalls off = walls_for("classic", false, modifier_walls);
+        CHECK(off.outer_wall_length > 1.3 * off.outline_length);
+        CHECK(off.left_crossings == 2 * left_walls);
+        CHECK(off.right_crossings == 2 * right_walls);
+    }
+    SECTION("Arachne keeps one set of walls per half") {
+        const BlockWalls arachne = walls_for("arachne", true, modifier_walls);
+        CHECK(arachne.outer_wall_length > 1.3 * arachne.outline_length);
     }
 }

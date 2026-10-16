@@ -32,6 +32,7 @@
 #include <map>
 #include <unordered_map>
 #include <tuple>
+#include <functional>
 #include <unordered_set>
 #include <thread>
 #include <vector>
@@ -414,6 +415,193 @@ static double clipper_z_path_length(const ClipperZUtils::ZPath &path)
     for (size_t i = 1; i < path.size(); ++ i)
         len += (Vec2d(double(path[i].x()), double(path[i].y())) - Vec2d(double(path[i - 1].x()), double(path[i - 1].y()))).norm();
     return len;
+}
+
+// Orca (Kurisu): continuous_modifier_walls.
+// Layer::make_perimeters() lets regions that differ only in wall_loops share one perimeter run, so the walls follow
+// the island's real outline. Without it each region closes its own loops along the modifier's boundary, which shows
+// as a seam on the surface and leaves a double wall inside the part. A zone is the area of the regions asking for
+// one wall count.
+struct WallCountZone
+{
+    int        wall_loops;
+    ExPolygons area;
+};
+
+// Empty unless the compatible regions disagree on the wall count, which leaves every other configuration on the
+// single-count path.
+static std::vector<WallCountZone> collect_wall_count_zones(const LayerRegionPtrs *regions)
+{
+    std::vector<WallCountZone> zones;
+    if (regions == nullptr)
+        return zones;
+    for (const LayerRegion *region : *regions) {
+        const int wall_loops = region->region().config().wall_loops.value;
+        auto      it         = std::find_if(zones.begin(), zones.end(), [wall_loops](const WallCountZone &z) { return z.wall_loops == wall_loops; });
+        if (it == zones.end()) {
+            zones.push_back({wall_loops, {}});
+            it = zones.end() - 1;
+        }
+        append(it->area, to_expolygons(region->slices.surfaces));
+    }
+    if (zones.size() < 2)
+        return {};
+    // Layer::is_perimeter_compatible() only lets non-zero wall counts share a run.
+    assert(std::all_of(zones.begin(), zones.end(), [](const WallCountZone &z) { return z.wall_loops > 0; }));
+    for (WallCountZone &zone : zones)
+        zone.area = union_ex(zone.area);
+    return zones;
+}
+
+// The parts of `polyline` inside `area`, in the polyline's own order and direction. Clipper may hand open-path
+// pieces back reversed and in any order, so Z carries the distance along the polyline through the clip
+// (clip_extrusion() interpolates it at the cuts) and both are restored from it.
+static Polylines intersection_pl_in_order(const Polyline &polyline, const Polygons &area)
+{
+    ClipperLib_Z::Path subject;
+    subject.reserve(polyline.size());
+    double distance = 0.;
+    for (size_t i = 0; i < polyline.size(); ++ i) {
+        if (i > 0)
+            distance += (polyline.points[i] - polyline.points[i - 1]).cast<double>().norm();
+        // clip_extrusion() takes Z > 0 for subject points and Z == 0 for clip points.
+        subject.emplace_back(polyline.points[i].x(), polyline.points[i].y(), coord_t(distance) + 1);
+    }
+    ClipperLib_Z::Paths clip;
+    clip.reserve(area.size());
+    for (const Polygon &polygon : area) {
+        ClipperLib_Z::Path &path = clip.emplace_back();
+        path.reserve(polygon.size());
+        for (const Point &pt : polygon.points)
+            path.emplace_back(pt.x(), pt.y(), 0);
+    }
+
+    ClipperLib_Z::Paths pieces = clip_extrusion(subject, clip, ClipperLib_Z::ctIntersection);
+    for (ClipperLib_Z::Path &piece : pieces)
+        if (piece.size() >= 2 && piece.front().z() > piece.back().z())
+            std::reverse(piece.begin(), piece.end());
+    std::sort(pieces.begin(), pieces.end(), [](const ClipperLib_Z::Path &a, const ClipperLib_Z::Path &b) {
+        return a.empty() || (! b.empty() && a.front().z() < b.front().z());
+    });
+
+    Polylines out;
+    out.reserve(pieces.size());
+    for (const ClipperLib_Z::Path &piece : pieces) {
+        if (piece.size() < 2)
+            continue;
+        Polyline &pl = out.emplace_back();
+        pl.points.reserve(piece.size());
+        for (const ClipperLib_Z::IntPoint &pt : piece)
+            pl.points.emplace_back(pt.x(), pt.y());
+    }
+    return out;
+}
+
+// Keep the part of a closed wall that lies in `area`: the loop itself when it never leaves `area`, otherwise one
+// ExtrusionMultiPath per stretch inside, in the loop's order and direction. Each cut end is pulled back by half a
+// line width so the bead's cap stops at the boundary instead of poking into the neighbouring zone's infill, as
+// clip_inner_perimeters_in_zone() does for the wave overhangs. Per-path role, flow and overhang split are kept.
+static void trim_loop_to_area(const ExtrusionLoop &loop, const Polygons &area, ExtrusionEntitiesPtr &out)
+{
+    struct Piece
+    {
+        const ExtrusionPath *path;
+        Polyline             polyline;
+    };
+    std::vector<Piece> pieces;
+    bool               unchanged = true;
+    for (const ExtrusionPath &path : loop.paths) {
+        const Polyline src  = path.polyline.to_polyline();
+        Polylines      kept = intersection_pl_in_order(src, area);
+        unchanged = unchanged && kept.size() == 1 && kept.front().first_point() == src.first_point() &&
+                    kept.front().last_point() == src.last_point() && std::abs(kept.front().length() - src.length()) < SCALED_EPSILON;
+        for (Polyline &pl : kept)
+            pieces.push_back({&path, std::move(pl)});
+    }
+    if (unchanged) {
+        out.emplace_back(loop.clone());
+        return;
+    }
+    if (pieces.empty())
+        return;
+
+    // Runs of pieces that join end to start, closing over the loop's start point when it lies inside.
+    auto joins = [](const Point &a, const Point &b) { return (a - b).cast<double>().squaredNorm() <= sqr(double(SCALED_EPSILON)); };
+    std::vector<std::vector<Piece>> runs;
+    for (Piece &piece : pieces) {
+        if (runs.empty() || ! joins(runs.back().back().polyline.last_point(), piece.polyline.first_point()))
+            runs.emplace_back();
+        runs.back().push_back(std::move(piece));
+    }
+    if (runs.size() > 1 && joins(runs.back().back().polyline.last_point(), runs.front().front().polyline.first_point())) {
+        append(runs.back(), std::move(runs.front()));
+        runs.erase(runs.begin());
+    }
+
+    for (std::vector<Piece> &run : runs) {
+        double run_length = 0.;
+        for (const Piece &piece : run)
+            run_length += piece.polyline.length();
+        const double half_width = scale_(0.5 * double(run.front().path->width));
+        if (run_length <= 2. * half_width + double(SCALED_EPSILON))
+            continue;
+        // Pull the run's ends back, dropping pieces shorter than what is left to pull.
+        for (double left = half_width; left > 0. && ! run.empty();) {
+            const double length = run.front().polyline.length();
+            if (length <= left + double(SCALED_EPSILON)) {
+                left -= length;
+                run.erase(run.begin());
+            } else {
+                run.front().polyline.clip_start(left);
+                left = 0.;
+            }
+        }
+        for (double left = half_width; left > 0. && ! run.empty();) {
+            const double length = run.back().polyline.length();
+            if (length <= left + double(SCALED_EPSILON)) {
+                left -= length;
+                run.pop_back();
+            } else {
+                run.back().polyline.clip_end(left);
+                left = 0.;
+            }
+        }
+        if (run.empty())
+            continue;
+
+        ExtrusionMultiPath multi_path;
+        multi_path.inset_idx = loop.inset_idx;
+        multi_path.is_even   = loop.is_even;
+        for (Piece &piece : run) {
+            if (piece.polyline.size() < 2)
+                continue;
+            ExtrusionPath &path = multi_path.paths.emplace_back(*piece.path);
+            // Perimeters carry no Z yet at this stage.
+            path.polyline = Polyline3(piece.polyline);
+        }
+        if (! multi_path.paths.empty())
+            out.emplace_back(new ExtrusionMultiPath(std::move(multi_path)));
+    }
+}
+
+// Trim each closed wall to the area of the zones that keep a loop at its depth. `area_for_depth` returns nullptr
+// when every zone of the island keeps that loop. Thin walls (inset_idx -1) and the outer wall (0) are never trimmed:
+// every zone has at least one wall.
+static void trim_walls_to_zones(ExtrusionEntityCollection &walls, const std::function<const Polygons *(int)> &area_for_depth)
+{
+    ExtrusionEntitiesPtr trimmed;
+    trimmed.reserve(walls.entities.size());
+    for (ExtrusionEntity *wall : walls.entities) {
+        const Polygons      *area = wall->inset_idx > 0 ? area_for_depth(wall->inset_idx) : nullptr;
+        const ExtrusionLoop *loop = area != nullptr ? dynamic_cast<const ExtrusionLoop *>(wall) : nullptr;
+        if (loop == nullptr) {
+            trimmed.emplace_back(wall);
+            continue;
+        }
+        trim_loop_to_area(*loop, *area, trimmed);
+        delete wall;
+    }
+    walls.entities = std::move(trimmed);
 }
 
 struct PerimeterGeneratorArachneExtrusion
@@ -1967,18 +2155,67 @@ void PerimeterGenerator::process_classic()
     // topmost and first layers - sees the same answer.
     const bool only_one_wall_top         = this->config->only_one_wall_top && has_top_shell_layers(*this->config);
     const bool only_one_wall_first_layer = this->config->only_one_wall_first_layer && has_bottom_shell_layers(*this->config);
+    const std::vector<WallCountZone> wall_count_zones = collect_wall_count_zones(this->compatible_regions);
     for (size_t order_idx = 0; order_idx < surface_order.size(); order_idx++) {
         const Surface &surface = all_surfaces[surface_order[order_idx]];
         // detect how many perimeters must be generated for this island
-        int loop_number = this->config->wall_loops + surface.extra_perimeters - 1;  // 0-indexed loops
         int sparse_infill_density = this->config->sparse_infill_density.value;
-        if (this->config->alternate_extra_wall && this->layer_id % 2 == 1 && !m_spiral_vase && sparse_infill_density > 0) // add alternating extra wall
-            loop_number++;
-        if (this->layer_id == object_config->raft_layers && only_one_wall_first_layer)
-            loop_number = 0;
-        // Set the topmost layer to be one wall
-        if (loop_number > 0 && only_one_wall_top && this->upper_slices == nullptr)
-            loop_number = 0;
+        auto loop_number_for = [&](int wall_loops) {
+            int loop_number = wall_loops + surface.extra_perimeters - 1;  // 0-indexed loops
+            if (this->config->alternate_extra_wall && this->layer_id % 2 == 1 && !m_spiral_vase && sparse_infill_density > 0) // add alternating extra wall
+                loop_number++;
+            if (this->layer_id == object_config->raft_layers && only_one_wall_first_layer)
+                loop_number = 0;
+            // Set the topmost layer to be one wall
+            if (loop_number > 0 && only_one_wall_top && this->upper_slices == nullptr)
+                loop_number = 0;
+            return loop_number;
+        };
+        int loop_number = loop_number_for(this->config->wall_loops);
+
+        // Orca (Kurisu): continuous_modifier_walls - the wall count zones this island spans, one per loop count. The
+        // island is walled once with the most loops any of them asks for; below, a loop deeper than a zone's own count
+        // is trimmed out of that zone together with the gaps beside it, and each zone fills from its own innermost loop.
+        struct IslandZone
+        {
+            int        loop_number;
+            ExPolygons area;
+        };
+        std::vector<IslandZone> island_zones;
+        for (const WallCountZone &zone : wall_count_zones) {
+            ExPolygons area = intersection_ex(zone.area, surface.expolygon);
+            if (area.empty())
+                continue;
+            const int zone_loop_number = loop_number_for(zone.wall_loops);
+            auto      it = std::find_if(island_zones.begin(), island_zones.end(), [zone_loop_number](const IslandZone &z) { return z.loop_number == zone_loop_number; });
+            if (it == island_zones.end())
+                island_zones.push_back({zone_loop_number, std::move(area)});
+            else
+                it->area = union_ex(it->area, area);
+        }
+        if (! island_zones.empty())
+            loop_number = std::max_element(island_zones.begin(), island_zones.end(),
+                [](const IslandZone &a, const IslandZone &b) { return a.loop_number < b.loop_number; })->loop_number;
+        // One zone left (the island sits in it, or the forced single wall evened them out): the plain path with its count.
+        const bool zoned = island_zones.size() > 1;
+        // The part of the island whose zones have the loop at `depth` (0-indexed, like loop_number), or nullptr when all
+        // of them have it.
+        std::map<int, Polygons> zone_area_cache;
+        auto area_keeping = [&](int depth) -> const Polygons * {
+            if (std::all_of(island_zones.begin(), island_zones.end(), [depth](const IslandZone &z) { return z.loop_number >= depth; }))
+                return nullptr;
+            auto it = zone_area_cache.find(depth);
+            if (it == zone_area_cache.end()) {
+                ExPolygons area;
+                for (const IslandZone &zone : island_zones)
+                    if (zone.loop_number >= depth)
+                        append(area, zone.area);
+                it = zone_area_cache.emplace(depth, to_polygons(union_ex(area))).first;
+            }
+            return &it->second;
+        };
+        // The innermost loop's area after each depth, from which a zone with that many loops takes its infill.
+        std::vector<ExPolygons> last_by_depth;
 
         ExPolygons last        = union_ex(surface.expolygon.simplify_p(surface_simplify_resolution));
         ExPolygons gaps;
@@ -2078,13 +2315,21 @@ void PerimeterGenerator::process_classic()
                         -float(distance + min_spacing / 2. - 1.),
                         float(min_spacing / 2. - 1.));
                     // look for gaps
-                    if (has_gap_fill)
+                    if (has_gap_fill) {
                         // not using safety offset here would "detect" very narrow gaps
                         // (but still long enough to escape the area threshold) that gap fill
                         // won't be able to fill but we'd still remove from infill area
-                        append(gaps, diff_ex(
+                        ExPolygons new_gaps = diff_ex(
                             offset(last,    - float(0.5 * distance)),
-                            offset(offsets,   float(0.5 * distance + 10))));  // safety offset
+                            offset(offsets,   float(0.5 * distance + 10)));  // safety offset
+                        // Orca (Kurisu): these gaps lie between loops i - 1 and i. A zone takes them if it has loop i - 1,
+                        // so the pass just past its last loop still finds the gaps its infill cannot reach - except with
+                        // no sparse infill, where that pass is skipped (below) and it takes them only if it has loop i.
+                        if (zoned)
+                            if (const Polygons *area = area_keeping(this->config->sparse_infill_density.value == 0 ? i : i - 1))
+                                new_gaps = intersection_ex(new_gaps, *area);
+                        append(gaps, std::move(new_gaps));
+                    }
                 }
                 if (offsets.empty() && offsets_with_smaller_width.empty()) {
                     // Store the number of loops actually generated.
@@ -2152,6 +2397,9 @@ void PerimeterGenerator::process_classic()
                         this->split_top_surfaces(last, top_fills, last, fill_clip);
                     }
                 }
+
+                if (zoned)
+                    last_by_depth.push_back(last);
 
                 if (i == loop_number && (! has_gap_fill || this->config->sparse_infill_density.value == 0)) {
                 	// The last run of this loop is executed to collect gaps for gap fill.
@@ -2412,6 +2660,11 @@ void PerimeterGenerator::process_classic()
             
             defer_unsupported_loops(*this, entities);
 
+            // Orca (Kurisu): continuous_modifier_walls - only now, once the wall order passes above have run on closed
+            // loops (odd-even casts every entity to ExtrusionLoop), cut each loop back to the zones that keep it.
+            if (zoned)
+                trim_walls_to_zones(entities, area_keeping);
+
             // append perimeters for this slice as a collection
             if (! entities.empty())
                 this->loops->append(entities);
@@ -2419,6 +2672,7 @@ void PerimeterGenerator::process_classic()
         } // for each loop of an island
 
         // fill gaps
+        Polygons gap_fill_covered;
         if (! gaps.empty()) { // collapse
             double min = gap_fill_min_width;
             double max = 2. * perimeter_spacing;
@@ -2466,7 +2720,7 @@ void PerimeterGenerator::process_classic()
                     and use zigzag).  */
                 //FIXME Vojtech: This grows by a rounded extrusion width, not by line spacing,
                 // therefore it may cover the area, but no the volume.
-                Polygons gap_fill_covered = gap_fill.polygons_covered_by_width(10.f);
+                gap_fill_covered = gap_fill.polygons_covered_by_width(10.f);
                 last = diff_ex(last, gap_fill_covered);
                 if (! one_wall_top_reclaimed.empty())
                     one_wall_top_reclaimed = diff_ex(one_wall_top_reclaimed, gap_fill_covered);
@@ -2479,38 +2733,84 @@ void PerimeterGenerator::process_classic()
         // we offset by half the perimeter spacing (to get to the actual infill boundary)
         // and then we offset back and forth by half the infill spacing to only consider the
         // non-collapsing regions
-        coord_t inset =
-            (loop_number < 0) ? 0 :
-            (loop_number == 0) ?
-                // one loop
-                ext_perimeter_spacing / 2 :
-                // two or more loops?
-                perimeter_spacing / 2;
-        
-        // only apply infill overlap if we actually have one perimeter
-        coord_t infill_peri_overlap = 0;
-        coord_t top_infill_peri_overlap = 0;
-        if (inset > 0) {
-            if(this->layer_id == 0 || this->upper_slices == nullptr){
-                infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset + solid_infill_spacing / 2))));
-            }else{
-                infill_peri_overlap = coord_t(scale_(this->config->infill_wall_overlap.get_abs_value(unscale<double>(inset + solid_infill_spacing / 2))));
-                top_infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset + solid_infill_spacing / 2))));
+        struct InfillInsets
+        {
+            coord_t inset                   = 0;
+            coord_t infill_peri_overlap     = 0;
+            coord_t top_infill_peri_overlap = 0;
+        };
+        auto infill_insets = [&](int loops) {
+            InfillInsets r;
+            r.inset =
+                (loops < 0) ? 0 :
+                (loops == 0) ?
+                    // one loop
+                    ext_perimeter_spacing / 2 :
+                    // two or more loops?
+                    perimeter_spacing / 2;
+
+            // only apply infill overlap if we actually have one perimeter
+            if (r.inset > 0) {
+                if(this->layer_id == 0 || this->upper_slices == nullptr){
+                    r.infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(r.inset + solid_infill_spacing / 2))));
+                }else{
+                    r.infill_peri_overlap = coord_t(scale_(this->config->infill_wall_overlap.get_abs_value(unscale<double>(r.inset + solid_infill_spacing / 2))));
+                    r.top_infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(r.inset + solid_infill_spacing / 2))));
+                }
+                r.inset -= r.infill_peri_overlap;
             }
-            inset -= infill_peri_overlap;
-        }
-        // simplify infill contours according to resolution
-        Polygons pp;
-        for (ExPolygon &ex : last)
-            ex.simplify_p(m_scaled_resolution, &pp);
-        ExPolygons not_filled_exp = union_ex(pp);
+            return r;
+        };
         // collapse too narrow infill areas
         coord_t min_perimeter_infill_spacing = coord_t(solid_infill_spacing * (1. - INSET_OVERLAP_TOLERANCE));
+        // The infill inside `inner`, the area left inside the innermost of `loops` (0-indexed) loops, and the same
+        // area without the infill's overlap onto the walls.
+        auto fill_inside = [&](const ExPolygons &inner, int loops, ExPolygons &infill, ExPolygons &no_overlap) {
+            const InfillInsets insets              = infill_insets(loops);
+            const coord_t      inset               = insets.inset;
+            const coord_t      infill_peri_overlap = insets.infill_peri_overlap;
+            // simplify infill contours according to resolution
+            Polygons pp;
+            for (const ExPolygon &ex : inner)
+                ex.simplify_p(m_scaled_resolution, &pp);
+            ExPolygons not_filled_exp = union_ex(pp);
 
-        ExPolygons infill_exp = offset2_ex(
-            not_filled_exp,
-            float(-inset - min_perimeter_infill_spacing / 2.),
-            float(min_perimeter_infill_spacing / 2.));
+            infill = offset2_ex(
+                not_filled_exp,
+                float(-inset - min_perimeter_infill_spacing / 2.),
+                float(min_perimeter_infill_spacing / 2.));
+            // BBS: get the no-overlap infill expolygons
+            if (min_perimeter_infill_spacing / 2 > infill_peri_overlap)
+                no_overlap = offset2_ex(
+                    not_filled_exp,
+                    float(-inset - min_perimeter_infill_spacing / 2.),
+                    float(min_perimeter_infill_spacing / 2 - infill_peri_overlap));
+            else
+                no_overlap = offset_ex(
+                    not_filled_exp,
+                    double(-inset - infill_peri_overlap));
+        };
+
+        ExPolygons infill_exp;
+        ExPolygons polyWithoutOverlap;
+        if (zoned) {
+            // Orca (Kurisu): continuous_modifier_walls - each zone fills from inside its own last loop. A zone that kept
+            // every loop fills what is left after them, which is nothing when the island ran out of room for them.
+            for (const IslandZone &zone : island_zones) {
+                const ExPolygons inner = zone.loop_number >= loop_number ? last :
+                                         gap_fill_covered.empty()        ? last_by_depth[zone.loop_number] :
+                                                                           diff_ex(last_by_depth[zone.loop_number], gap_fill_covered);
+                ExPolygons zone_infill, zone_no_overlap;
+                fill_inside(inner, zone.loop_number, zone_infill, zone_no_overlap);
+                append(infill_exp, intersection_ex(zone_infill, zone.area));
+                append(polyWithoutOverlap, intersection_ex(zone_no_overlap, zone.area));
+            }
+            infill_exp         = union_ex(infill_exp);
+            polyWithoutOverlap = union_ex(polyWithoutOverlap);
+        } else
+            fill_inside(last, loop_number, infill_exp, polyWithoutOverlap);
+        const coord_t top_infill_peri_overlap = infill_insets(loop_number).top_infill_peri_overlap;
+
         // append infill areas to fill_surfaces
         //if any top_fills, grow them by ext_perimeter_spacing/2 to have the real un-anchored fill
         ExPolygons top_infill_exp = intersection_ex(fill_clip, offset_ex(top_fills, double(ext_perimeter_spacing / 2)));
@@ -2529,16 +2829,6 @@ void PerimeterGenerator::process_classic()
 
         // BBS: get the no-overlap infill expolygons
         {
-            ExPolygons polyWithoutOverlap;
-            if (min_perimeter_infill_spacing / 2 > infill_peri_overlap)
-                polyWithoutOverlap = offset2_ex(
-                    not_filled_exp,
-                    float(-inset - min_perimeter_infill_spacing / 2.),
-                    float(min_perimeter_infill_spacing / 2 - infill_peri_overlap));
-            else
-                polyWithoutOverlap = offset_ex(
-                    not_filled_exp,
-                    double(-inset - infill_peri_overlap));
             if (!top_fills.empty())
                 polyWithoutOverlap = union_ex(polyWithoutOverlap, top_infill_exp);
             if (!one_wall_top_reclaimed.empty())

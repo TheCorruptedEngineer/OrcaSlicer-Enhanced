@@ -1154,6 +1154,7 @@ static std::vector<std::string> s_Preset_print_options{
     "initial_layer_print_height",
     "wall_loops",
     "alternate_extra_wall",
+    "continuous_modifier_walls",
     "slice_closing_radius",
     "spiral_mode",
     "spiral_mode_smooth",
