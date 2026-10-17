@@ -242,6 +242,29 @@ static t_config_enum_values s_keys_map_PowerLossRecoveryMode {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PowerLossRecoveryMode)
 
+// Orca: wave-overhang ring spacing mode
+static t_config_enum_values s_keys_map_WaveOverhangSpacingMode {
+    { "uniform",     wosmUniform },
+    { "progressive", wosmProgressive }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WaveOverhangSpacingMode)
+
+// Orca: wave-overhang seam mode
+static t_config_enum_values s_keys_map_WaveOverhangSeamMode {
+    { "alternating", woseAlternating },
+    { "aligned",     woseAligned },
+    { "random",      woseRandom }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WaveOverhangSeamMode)
+
+// Wave-overhang fill pattern (ported from stmcculloch alpha.6).
+static t_config_enum_values s_keys_map_WaveOverhangPattern {
+    { "monotonic", int(WaveOverhangPattern::Monotonic) },
+    { "zigzag",    int(WaveOverhangPattern::ZigZag) },
+    { "smart",     int(WaveOverhangPattern::Smart) }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WaveOverhangPattern)
+
 static t_config_enum_values s_keys_map_CenterOfSurfacePattern{
     {"each_surface", int(CenterOfSurfacePattern::Each_Surface)},
     {"each_model", int(CenterOfSurfacePattern::Each_Model)},
@@ -337,7 +360,8 @@ static t_config_enum_values s_keys_map_WallInfillOrder {
     { "inner-outer-inner wall/infill",     int(WallInfillOrder::InnerOuterInnerInfill) },
     { "infill/inner wall/outer wall",     int(WallInfillOrder::InfillInnerOuter) },
     { "infill/outer wall/inner wall",     int(WallInfillOrder::InfillOuterInner) },
-    { "inner-outer-inner wall/infill",     int(WallInfillOrder::InnerOuterInnerInfill)}
+    { "inner-outer-inner wall/infill",     int(WallInfillOrder::InnerOuterInnerInfill)},
+    { "odd-even wall/infill",             int(WallInfillOrder::OddEvenInfill)}
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallInfillOrder)
 
@@ -345,10 +369,17 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallInfillOrder)
 static t_config_enum_values s_keys_map_WallSequence {
     { "inner wall/outer wall",     int(WallSequence::InnerOuter) },
     { "outer wall/inner wall",     int(WallSequence::OuterInner) },
-    { "inner-outer-inner wall",    int(WallSequence::InnerOuterInner)}
-
+    { "inner-outer-inner wall",    int(WallSequence::InnerOuterInner)},
+    { "odd-even wall",             int(WallSequence::OddEven)}
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSequence)
+
+static t_config_enum_values s_keys_map_LoopSequence {
+    { "inner wall/outer wall",     int(LoopSequence::InwardOutward) },
+    { "inner wall/inner wall",     int(LoopSequence::InwardInward) },
+    { "outer wall/inner wall",     int(LoopSequence::OutwardOutward) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(LoopSequence)
 
 //Orca
 static t_config_enum_values s_keys_map_WallDirection{
@@ -1799,8 +1830,8 @@ void PrintConfigDef::init_fff_params()
     def = this->add("precise_outer_wall",coBool);
     def->label = L("Precise wall");
     def->category = L("Quality");
-    def->tooltip  = L("Improve shell precision by adjusting outer wall spacing. This also improves layer consistency. NOTE: This option "
-                       "will be ignored for outer-inner or inner-outer-inner wall sequences.");
+    def->tooltip  = L("Improve shell precision by adjusting outer wall spacing. This also improves layer consistency. "
+                      "NOTE: This option will be ignored for outer-inner, inner-outer-inner or odd-even (whithout outermost control) wall sequences. ");
     def->set_default_value(new ConfigOptionBool{true});
 
     def = this->add("only_one_wall_top", coBool);
@@ -2701,16 +2732,72 @@ void PrintConfigDef::init_fff_params()
                      "then the external perimeter and, finally, the first internal perimeter. "
                      "This option is recommended over the Outer/Inner option in most cases.\n\n"
                      "Use Outer/Inner for the same external wall quality and dimensional accuracy benefits of Inner/Outer/Inner option. "
-                     "However, the Z seams will appear less consistent as the first extrusion of a new layer starts on a visible surface.");
+                     "However, the Z seams will appear less consistent as the first extrusion of a new layer starts on a visible surface.\n\n "
+                     "Use Odd-Even for making monolithic walls. All loops are divided into odd and even. "
+                     "Odds are printed first. Even fill the already formed grooves with melted extra material. "
+                     "It is also possible to slow down their printing speed, which allows you to create conditions for better adhesion between the loops and layers. "
+                     "It is recommended to use more walls, at least 3. A good result is achieved with 5 ones and more.\n\n");
     def->enum_keys_map = &ConfigOptionEnum<WallSequence>::get_enum_values();
     def->enum_values.push_back("inner wall/outer wall");
     def->enum_values.push_back("outer wall/inner wall");
     def->enum_values.push_back("inner-outer-inner wall");
+    def->enum_values.push_back("odd-even wall");
     def->enum_labels.push_back(L("Inner/Outer"));
     def->enum_labels.push_back(L("Outer/Inner"));
     def->enum_labels.push_back(L("Inner/Outer/Inner"));
+    def->enum_labels.push_back(L("Odd-Even"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<WallSequence>(WallSequence::InnerOuter));
+
+    def           = this->add("loop_sequence", coEnum);
+    def->label    = L("Odd-Even loop sequence");
+    def->category = L("Quality");
+    def->tooltip  = L("Print sequence of the odd and even loops inside the wall.\n"
+                      "Odds are printed first. Even fill the already formed grooves with melted extra material. "
+                      "It is also possible to slow down their printing speed, which allows you to create conditions for better adhesion between the loops and layers. "
+                      "The order of laying the loops can be either inward or outward. "
+                      "This order allows you to set specific printing conditions. For example, the initial inward movement gives to the outer perimeter more time to cooldown, reducing the potential 'debris' during overextrusion by moving its into infill. "
+                      "Moving from the center will stabilize the filament inside the model during a long retract. ");
+    def->enum_keys_map = &ConfigOptionEnum<LoopSequence>::get_enum_values();
+    def->enum_values.push_back("inward/outward");
+    def->enum_values.push_back("inward/inward");
+    def->enum_values.push_back("outward/outward");
+    def->enum_labels.push_back(L("Inward/Outward"));
+    def->enum_labels.push_back(L("Inward/Inward"));
+    def->enum_labels.push_back(L("Outward/Outward"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<LoopSequence>(LoopSequence::InwardOutward));
+
+    def           = this->add("even_loops_flow_ratio", coFloat);
+    def->label    = L("Even loops flow ratio");
+    def->tooltip  = L("Adjust the flow coefficient for even inner loops for a rigidity and closing the cavities between the loops.");
+    def->category = L("Quality");
+    def->max      = 2;
+    def->min      = 0.9;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1.05));
+
+    def             = this->add("even_loops_speed", coFloatOrPercent);
+    def->label      = L("Even loops speed");
+    def->category   = L("Quality");
+    def->tooltip    = L("This separate setting will affect the speed of even perimeters. "
+                        "This can increase the printing time of the filling perimeter to allow the molten material to interact better with the already formed loops. "
+                        "If expressed as percentage (for example: 80%) it will be calculated on the inner perimeter speed setting.");
+    def->sidetext   = L("mm/s or %");
+    def->ratio_over = "inner_wall_speed";
+    def->max        = 110;
+    def->min        = 1;
+    def->mode       = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent(50, true));
+
+    def = this->add("outermost_wall_control",coBool);
+    def->label    = L("Outermost wall control");
+    def->tooltip  = L("If Enabled, the outermost wall is printed last to prevent overhanging."
+                      "If you choose Disable, the outer wall will be calculated together with the rest in the one package. "
+                      "This is useful for cases where need maximum rigidity and solidity of the walls without overhangs.");
+    def->category = L("Quality");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool{true});
 
     def = this->add("is_infill_first",coBool);
     def->label    = L("Print infill first");
@@ -5820,6 +5907,492 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    // Wave Overhangs
+    def = this->add("wave_overhangs", coBool);
+    def->label = L("Use wave overhangs (Experimental)");
+    def->category = L("Strength");
+    def->tooltip = L("Generate wave-patterned perimeters over overhangs to print steep angles "
+                     "without supports.");
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wave_overhangs_instead_of_bridges", coBool);
+    def->label = L("Use wave overhangs instead of bridges");
+    def->category = L("Strength");
+    def->tooltip = L("When wave overhangs are enabled, suppress every bridge classification "
+                     "in this region and fill with solid infill instead. Off by default: simple "
+                     "flat spans stay as regular bridges, only concave or holed overhangs get "
+                     "waves. Turn on to guarantee no bridge patterns anywhere in the region "
+                     "(bottom bridges and internal bridges both become solid infill).");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wave_overhang_outer_perimeters", coInt);
+    def->label = L("Perimeters");
+    def->category = L("Strength");
+    def->tooltip = L("Number of outer perimeters preserved inside the overhang region. The rest of the "
+                     "overhang is replaced by the wave pattern. Independent of Quality › Walls: "
+                     "setting this to 1 always gives one outer wall then wave, regardless of how many "
+                     "walls the rest of the object uses. 1 is usually enough. Set to 0 for pure wave "
+                     "(no perimeter at the overhang boundary). Capped at the effective wall count for "
+                     "the layer (e.g. 1 on topmost layers with \"only one wall top\").");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(1));
+
+    def = this->add("wave_overhang_perimeter_overlap", coFloat);
+    def->label = L("Perimeter overlap");
+    def->category = L("Strength");
+    def->tooltip = L("Extends the wave propagation boundary toward nearby perimeter lines so the last wave sits closer to the kept perimeter. "
+                     "This reduces the gap between wave lines and perimeter shells.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.1));
+
+    def = this->add("wave_overhang_minimum_width", coFloat);
+    def->label = L("Minimum wave width");
+    def->category = L("Strength");
+    def->tooltip = L("If a narrow neck in the wave region is smaller than this width, a thin split is inserted there before propagation so fragile wave branches do not form. "
+                     "Larger values split more aggressively.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.7));
+
+    def = this->add("wave_overhang_pattern", coEnum);
+    def->label = L("Pattern");
+    def->category = L("Strength");
+    def->tooltip = L("Controls whether wave-overhang tracks are printed one direction at a time (monotonic), "
+                     "connected into a back-and-forth meander (zig-zag), or started from the better-supported end of each new wave line (smart).");
+    def->enum_keys_map = &ConfigOptionEnum<WaveOverhangPattern>::get_enum_values();
+    def->enum_values.push_back("monotonic");
+    def->enum_values.push_back("zigzag");
+    def->enum_values.push_back("smart");
+    def->enum_labels.push_back(L("Monotonic"));
+    def->enum_labels.push_back(L("Zigzag"));
+    def->enum_labels.push_back(L("Smart"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WaveOverhangPattern>(WaveOverhangPattern::Smart));
+
+    def = this->add("wave_overhang_line_spacing", coFloat);
+    def->label = L("Line spacing");
+    def->category = L("Strength");
+    def->tooltip = L("Center-to-center distance between adjacent wave-overhang extrusions.");
+    def->sidetext = L("mm");
+    def->mode = comAdvanced;
+    def->min = 0.01;
+    def->set_default_value(new ConfigOptionFloat(0.35));
+
+    def = this->add("wave_overhang_flow_mm3_per_mm", coFloat);
+    def->label = L("Wave flow");
+    def->category = L("Strength");
+    def->tooltip = L("Volume of plastic extruded per millimetre of wave-overhang line, in mm³/mm.\n\n"
+                     "Default 0.15 is a calibrated reference value for a 0.4 mm nozzle. "
+                     "The bead hangs in air rather than being squished against a layer below, so layer "
+                     "height has no effect on its cross-section. For non-0.4 mm nozzles, scale as "
+                     "0.15 × (nozzle/0.4)²: about 0.09 for 0.3 mm, 0.34 for 0.6 mm, 0.60 for 0.8 mm.\n\n"
+                     "Raise if wave lines look thin or broken; lower if they blob together.");
+    def->sidetext = L("mm³/mm");
+    def->mode = comAdvanced;
+    def->min = 0.02;
+    def->max = 1.5;
+    def->set_default_value(new ConfigOptionFloat(0.15));
+
+    def = this->add("wave_overhang_print_speed", coFloat);
+    def->label = L("Print speed");
+    def->category = L("Speed");
+    def->tooltip = L("Print speed for wave-overhang extrusions. Slow speeds give better cooling "
+                     "and adhesion of the cantilevered tracks.");
+    def->sidetext = L("mm/s");
+    def->mode = comAdvanced;
+    def->min = 0.1;
+    def->set_default_value(new ConfigOptionFloat(2.0));
+
+    def = this->add("wave_overhang_perimeter_speed", coFloat);
+    def->label = L("Perimeter speed");
+    def->category = L("Speed");
+    def->tooltip = L("Print speed for the walls (perimeters) on layers that contain wave-overhang "
+                     "traces. The walls in those layers anchor onto the cantilevered wave traces, "
+                     "so printing them at the regular outer/inner wall speed often pulls the wave "
+                     "loose or starves adhesion. 0 = inherit the normal wall speed.");
+    def->sidetext = L("mm/s");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 1000;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_travel_speed", coFloat);
+    def->label = L("Travel speed");
+    def->category = L("Speed");
+    def->tooltip = L("Travel speed within wave-overhang regions (between non-extruding hops).");
+    def->sidetext = L("mm/s");
+    def->mode = comAdvanced;
+    def->min = 1.0;
+    def->set_default_value(new ConfigOptionFloat(40.0));
+
+    def = this->add("wave_overhang_fan_speed", coInt);
+    def->label = L("Fan speed");
+    def->category = L("Cooling");
+    def->tooltip = L("Part-cooling fan percentage forced during wave-overhang extrusions. "
+                     "Maximum cooling is usually best.");
+    def->sidetext = L("%");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 100;
+    def->set_default_value(new ConfigOptionInt(100));
+
+    def = this->add("wave_overhang_aux_fan_speed", coInt);
+    def->label = L("Aux fan speed");
+    def->category = L("Cooling");
+    def->tooltip = L("Auxiliary (chamber/side) fan percentage forced during wave-overhang extrusions. "
+                     "Useful when you want strong sideways airflow on the unsupported wave tracks "
+                     "without ramping up the printhead fan (which can cause an intra-layer thermal "
+                     "gradient near the nozzle). Requires the printer's auxiliary fan to be enabled. "
+                     "-1 = inherit the normal aux fan speed.");
+    def->sidetext = L("%");
+    def->mode = comAdvanced;
+    def->min = -1;
+    def->max = 100;
+    def->set_default_value(new ConfigOptionInt(-1));
+
+    def = this->add("wave_overhang_nozzle_temp", coInt);
+    def->label = L("Nozzle temperature");
+    def->category = L("Cooling");
+    def->tooltip = L("If non-zero, override the hotend temperature specifically for wave-overhang "
+                     "extrusions. An M104 is emitted at the start of each wave region and restored "
+                     "to the filament default at the end. Useful to experiment with cooler extrusion "
+                     "on the unsupported tracks (less sagging, better cooling). Set to 0 to keep the "
+                     "filament default.");
+    def->sidetext = L("°C");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 350;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("wave_overhang_min_wave_time", coFloat);
+    def->label = L("Min wave time");
+    def->category = L("Cooling");
+    def->tooltip = L("Minimum time in seconds each wave region must take. If a wave region's "
+                     "extrusion would finish faster than this, a G4 dwell pads the difference "
+                     "before the next region — gives each ring time to solidify. Set to 0 to "
+                     "disable.");
+    def->sidetext = L("s");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 60;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_min_layer_time", coFloat);
+    def->label = L("Min layer time");
+    def->category = L("Cooling");
+    def->tooltip = L("Minimum time in seconds the wave layer must take (from first wave "
+                     "extrusion to layer end). If the layer would finish faster than this, a "
+                     "G4 dwell pads the difference before the next layer starts — gives the "
+                     "wave bed time to solidify before solid infill lands on top. Targets "
+                     "warping. Set to 0 to disable.");
+    def->sidetext = L("s");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 300;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_corner_taper_enable", coBool);
+    def->label = L("Enable corner-aware spacing taper");
+    def->category = L("Quality");
+    def->tooltip = L("When enabled, the wave-overhang generator densifies line spacing near sharp "
+                     "convex corners of the overhang outline. Corners warp worst because their "
+                     "cantilevered wave lines are short and have little neighbouring material to "
+                     "fuse with, so they curl as PLA cools. Packing more lines into a small radius "
+                     "around each corner gives each short line a neighbour to bond with, resisting "
+                     "the curl. The corner radius, denser spacing, and angle threshold appear when "
+                     "this is on.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wave_overhang_line_spacing_corner", coFloat);
+    def->label = L("Corner line spacing");
+    def->category = L("Quality");
+    def->tooltip = L("Denser line spacing used near detected sharp corners of the overhang region. "
+                     "Corners warp worst because short cantilevered wave lines cool unevenly and curl. "
+                     "Packing more lines into the corner zone gives each line a nearby neighbour to "
+                     "fuse with, resisting the curl. Must be smaller than the main line spacing for "
+                     "the taper to engage; the master toggle above must also be on.");
+    def->sidetext = L("mm");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 2;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_corner_taper_distance", coFloat);
+    def->label = L("Corner taper distance");
+    def->category = L("Quality");
+    def->tooltip = L("Radius around each detected corner vertex over which the tapered (denser) "
+                     "spacing is applied. Lines inside this radius use the corner spacing; lines "
+                     "further in use the normal spacing. Larger values widen the reinforced zone "
+                     "at the cost of more extrusion time. Set to 0 to disable corner tapering.");
+    def->sidetext = L("mm");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 20;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_corner_angle_threshold", coFloat);
+    def->label = L("Corner angle threshold");
+    def->category = L("Quality");
+    def->tooltip = L("A vertex on the overhang contour is classified as a corner when its interior "
+                     "angle is smaller than this threshold. Smaller values catch only very sharp "
+                     "corners; larger values flag gentler turns too. 90 degrees is a reasonable "
+                     "default for most shapes.");
+    def->sidetext = L("degrees");
+    def->mode = comAdvanced;
+    def->min = 10;
+    def->max = 180;
+    def->set_default_value(new ConfigOptionFloat(90.0));
+
+    def = this->add("wave_overhang_end_retract_length", coFloat);
+    def->label = L("End-of-line retract");
+    def->category = L("Quality");
+    def->tooltip = L("Force a retraction of this many mm at the end of every wave-overhang line, "
+                     "independent of the filament's normal retraction settings. Relieves nozzle "
+                     "pressure so residual melt doesn't ooze into the gap between adjacent wave "
+                     "lines or bead up against the enclosing perimeter. The next wave line's lead-in "
+                     "travel automatically unretracts. Set to 0 to rely on Orca's normal travel-"
+                     "distance retraction heuristic.");
+    def->sidetext = L("mm");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 10;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_floor_layers", coInt);
+    def->label = L("Floor layers");
+    def->category = L("Strength");
+    def->tooltip = L("Number of solid floor layers placed directly above wave-overhang regions. "
+                     "These layers bridge over the wave surface and give the cantilever mechanical backing.\n\n"
+                     "This count is authoritative inside the wave region, not additive with the normal shell "
+                     "settings: the layers above a wave are governed by this value alone, and the usual top/bottom "
+                     "shell propagation is suppressed there.\n\n"
+                     "0 = no solid backing at all above the wave (the region is filled with sparse infill). "
+                     "Choose 0 only for a pure-wave overhang with nothing resting on it.");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 20;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def = this->add("wave_overhang_floor_use_hilbert", coBool);
+    def->label = L("Hilbert curve floor");
+    def->category = L("Strength");
+    def->tooltip = L("Force the solid floor layers above wave-overhang regions to use a Hilbert curve "
+                     "infill pattern instead of the region's normal solid-infill pattern. Fractal scan "
+                     "paths leave the smallest residual thermal stresses, which significantly reduces "
+                     "warping that pulls long cantilevered overhangs upward as the layers above cool. "
+                     "Opt-in: when off, floor layers retain the existing pattern.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wave_overhang_floor_hilbert_layers", coInt);
+    def->label = L("Hilbert floor layer count");
+    def->category = L("Strength");
+    def->tooltip = L("Of the N solid floor layers above each wave region, only the bottom M get the "
+                     "Hilbert pattern; the rest use the default solid-infill pattern. The lowest "
+                     "layers warp most, so capping the Hilbert band saves print time without losing "
+                     "much warping benefit. 0 = match Floor layers (Hilbert on every solid floor).");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 20;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("wave_overhang_floor_hilbert_density", coInt);
+    def->label = L("Hilbert floor density");
+    def->category = L("Strength");
+    def->tooltip = L("Infill percentage for the Hilbert-pattern floor layers. 100 = recipe-spec solid "
+                     "Hilbert (matches the cited research). Below 100 turns the floor into a sparse "
+                     "Hilbert: faster and less material, at the cost of weaker mechanical backing for "
+                     "the wave below. Experimental setting — 100 is the safe default.");
+    def->sidetext = L("%");
+    def->mode = comAdvanced;
+    def->min = 1;
+    def->max = 100;
+    def->set_default_value(new ConfigOptionInt(100));
+
+    def = this->add("wave_overhang_floor_print_speed", coFloat);
+    def->label = L("Hilbert floor print speed");
+    def->category = L("Speed");
+    def->tooltip = L("Print speed for the Hilbert-pattern floor layers above wave-overhang regions. "
+                     "Slower speeds give each line more time to dissipate heat before the next "
+                     "neighbouring line lands on top, reducing the residual thermal stress that drives "
+                     "warping. 0 = inherit the normal solid-infill speed.");
+    def->sidetext = L("mm/s");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 1000;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_floor_perimeter_speed", coFloat);
+    def->label = L("Floor perimeter speed");
+    def->category = L("Speed");
+    def->tooltip = L("Print speed for the walls (perimeters) on the floor layers above wave-overhang "
+                     "regions. The fragile wave shadow underneath warps when fast walls land on top, "
+                     "so slowing them lets the substrate stay closer to bed temperature and relaxes "
+                     "thermal stress. 0 = inherit the normal wall speed.");
+    def->sidetext = L("mm/s");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 1000;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_floor_speed_ramp", coInt);
+    def->label = L("Floor speed ramp");
+    def->category = L("Speed");
+    def->tooltip = L("Number of layers over which the floor-layer speed overrides (Floor print speed "
+                     "and Floor perimeter speed) ramp linearly from the slow override speed back up "
+                     "to the normal print/wall speed.\n\n"
+                     "0 = step function (current behaviour): every floor layer prints at the override "
+                     "speed, then snaps back to normal on the next layer.\n"
+                     "1..N = layer 1 above the wave prints at the override speed, layer N (or the last "
+                     "floor layer, whichever comes first) prints at full normal speed, with linear "
+                     "interpolation in between.\n\n"
+                     "Helpful for releasing the thermal stress that builds up at the speed transition: "
+                     "the gradual ramp keeps each layer slightly warmer than the next as the print "
+                     "moves away from the wave shadow, so curl is spread across the ramp instead of "
+                     "concentrated at one boundary.\n\n"
+                     "Capped by Floor layers; if you set a ramp longer than the floor-layer count, "
+                     "the ramp ends at the top floor layer.");
+    def->sidetext = L("layers");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 64;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("wave_overhang_floor_fan_speed", coInt);
+    def->label = L("Hilbert floor fan speed");
+    def->category = L("Cooling");
+    def->tooltip = L("Cooling fan percentage forced during the Hilbert-pattern floor layers above "
+                     "wave-overhang regions. Lower fan keeps the layer warmer for longer, letting "
+                     "thermal stress relax before it solidifies into a permanently-curled state. "
+                     "Counter-intuitive but matches the cited research: warmer = more stress relaxation. "
+                     "-1 = inherit the normal fan speed.");
+    def->sidetext = L("%");
+    def->mode = comAdvanced;
+    def->min = -1;
+    def->max = 100;
+    def->set_default_value(new ConfigOptionInt(-1));
+
+    def = this->add("wave_overhang_floor_aux_fan_speed", coInt);
+    def->label = L("Hilbert floor aux fan speed");
+    def->category = L("Cooling");
+    def->tooltip = L("Auxiliary (chamber/side) fan percentage forced during the Hilbert-pattern floor "
+                     "layers above wave-overhang regions. Pair with a low printhead fan to keep the "
+                     "layer warm near the nozzle while still moving air through the chamber. "
+                     "Requires the printer's auxiliary fan to be enabled. "
+                     "-1 = inherit the normal aux fan speed.");
+    def->sidetext = L("%");
+    def->mode = comAdvanced;
+    def->min = -1;
+    def->max = 100;
+    def->set_default_value(new ConfigOptionInt(-1));
+
+    def = this->add("wave_overhang_min_angle", coFloat);
+    def->label = L("Min angle");
+    def->category = L("Strength");
+    def->tooltip = L("Soft limit only — currently NOT enforced. Orca's upstream overhang "
+                     "detection (Strength → Detect overhang walls / Overhang reverse "
+                     "threshold) is the primary slope filter that decides which regions "
+                     "become wave-overhang candidates. This value is kept as metadata on "
+                     "the profile for potential future use. 0 = no filtering.");
+    def->sidetext = L("°");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 90;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("wave_overhang_spacing_mode", coEnum);
+    def->label = L("Spacing mode");
+    def->category = L("Strength");
+    def->tooltip = L("How ring-to-ring spacing varies across the wave. Uniform keeps constant step. "
+                     "Progressive tightens near the supported edge and widens toward the cantilever tip "
+                     "for better mechanical anchoring.");
+    def->enum_keys_map = &ConfigOptionEnum<WaveOverhangSpacingMode>::get_enum_values();
+    def->enum_values.push_back("uniform");
+    def->enum_values.push_back("progressive");
+    def->enum_labels.push_back(L("Uniform"));
+    def->enum_labels.push_back(L("Progressive"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WaveOverhangSpacingMode>(wosmUniform));
+
+    def = this->add("wave_overhang_seam_mode", coEnum);
+    def->label = L("Seam mode");
+    def->category = L("Strength");
+    def->tooltip = L("Direction pattern across successive wave rings. Alternating (boustrophedon) minimizes "
+                     "travel. Aligned keeps all rings same-direction for consistent flow but adds travel jumps. "
+                     "Random hides the start seam in high-visibility surfaces.");
+    def->enum_keys_map = &ConfigOptionEnum<WaveOverhangSeamMode>::get_enum_values();
+    def->enum_values.push_back("alternating");
+    def->enum_values.push_back("aligned");
+    def->enum_values.push_back("random");
+    def->enum_labels.push_back(L("Alternating"));
+    def->enum_labels.push_back(L("Aligned"));
+    def->enum_labels.push_back(L("Random"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WaveOverhangSeamMode>(woseAlternating));
+
+    def = this->add("wave_overhang_debug_gcode", coBool);
+    def->label = L("Debug g-code");
+    def->category = L("Strength");
+    def->tooltip = L("Emit ';WAVE_OVERHANG_START'/';WAVE_OVERHANG_END' comments around wave-overhang "
+                     "extrusions in the G-code. Useful for post-process inspection and debugging. "
+                     "Comments-only — no effect on the print.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("wave_overhang_min_length", coFloat);
+    def->label = L("Min length");
+    def->category = L("Strength");
+    def->tooltip = L("Minimum overhang perimeter length (in mm) below which wave-overhang generation "
+                     "is skipped. Useful to avoid waving tiny overhangs where normal perimeters are fine.");
+    def->sidetext = L("mm");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 50;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("wave_overhang_max_iterations", coInt);
+    def->label = L("Max iterations");
+    def->category = L("Strength");
+    def->tooltip = L("Safety cap on the wave-overhang generator's main loop: max wavefronts per overhang "
+                     "region. 0 = unlimited (stops naturally when the generator can't grow further). "
+                     "Useful for bounding print time on very large overhangs.");
+    def->mode = comAdvanced;
+    def->min = 0;
+    def->max = 500;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("wave_overhang_min_new_area", coFloat);
+    def->label = L("Min new area");
+    def->category = L("Strength");
+    def->tooltip = L("Termination threshold for wave-overhang propagation: when a new wavefront adds less "
+                     "than this much new area over the previous wavefront, stop propagating. "
+                     "Lower = longer propagation, potentially denser coverage. Higher = earlier "
+                     "termination. Default 0.01 mm² is a safe early-stop; lower toward 0.0001 for "
+                     "maximum coverage.");
+    def->sidetext = L("mm²");
+    def->mode = comDevelop;
+    def->min = 0.0;
+    def->max = 100.0;
+    def->set_default_value(new ConfigOptionFloat(0.01));
+
+    def = this->add("support_remaining_areas_after_wave_overhangs", coBool);
+    def->label = L("Support unfilled wave overhang areas");
+    def->category = L("Support");
+    def->tooltip = L("When wave overhangs are enabled AND supports are on, only generate supports "
+                     "for overhang areas the wave toolpaths did NOT cover. Explicit support enforcers "
+                     "still apply normally. Disable to let the support generator ignore wave coverage "
+                     "(treats every overhang as if waves weren't there).");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+
     def = this->add("unsupported_wall_last", coBool);
     def->label = L("Print unsupported walls last");
     def->category = L("Quality");
@@ -8001,6 +8574,23 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def          = this->add("staggered_perimeters", coBool);
+    def->label   = L("Stagger perimeters");
+    def->category = L("Strength");
+    def->tooltip = L("This is an experimental feature that allows you to print staggered perimeters for better layer adhesion and strength.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("staggered_perimeter_flow_ratio", coFloat);
+    def->label = L("Staggered wall flow ratio");
+    def->category = L("Strength");
+    def->tooltip = L("This factor affects the amount of material for staggered inner walls.\n\n"
+                     "The actual staggered inner wall flow used is calculated by multiplying this value by the current wall flow.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
     def = this->add("change_filament_gcode", coString);
     def->label = L("Change filament G-code");
     def->tooltip = L("This G-code is inserted when filament is changed, including T commands to trigger tool change.");
@@ -9750,6 +10340,9 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         } else if (value == "inner-outer-inner wall/infill") {
             opt_key = "wall_sequence";
             value = "inner-outer-inner wall";
+        } else if (value == "odd-even wall/infill") {
+            opt_key = "wall_sequence";
+            value   = "odd-even wall";
         } else {
             opt_key = "wall_sequence";
         }

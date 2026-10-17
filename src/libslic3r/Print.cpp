@@ -290,6 +290,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "required_nozzle_HRC",
         "upward_compatible_machine",
         "is_infill_first",
+        "even_loops_flow_ratio", "loop_sequence", "even_loops_speed", "outermost_wall_control",
         // Orca
         "chamber_temperature",
         "chamber_minimal_temperature",
@@ -511,7 +512,11 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             //BBS: when enable arc fitting, we must re-generate perimeter
             || opt_key == "enable_arc_fitting"
             || opt_key == "print_order"
-            || opt_key == "wall_sequence") {
+            || opt_key == "wall_sequence"
+            || opt_key == "even_loops_speed"
+            || opt_key == "loop_sequence"
+            || opt_key == "outermost_wall_control"
+            || opt_key == "even_loops_flow_ratio" ) {
             osteps.emplace_back(posPerimeters);
             osteps.emplace_back(posEstimateCurledExtrusions);
             osteps.emplace_back(posInfill);
@@ -2833,6 +2838,19 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 // }
             };
             check_extruder(0); // TODO: check used extruder variants
+
+            // check minimum walls
+            if (m_default_region_config.wall_loops < 3 &&
+                    (m_default_region_config.wall_sequence == WallSequence::OddEven ||
+                    m_default_region_config.wall_sequence == WallSequence::InnerOuterInner)) {
+                WallSequence _wall_sequence = m_default_region_config.wall_sequence;
+                motion_warning.string = format(L("The number of perimeters is %d, which is not enough for a full-fledged generation in the %s order.\n"
+                                         "Minimum is 3. %s"
+                                         "Otherwise, make sure that the order of the walls matches the desired result. "), m_default_region_config.wall_loops,
+                                         _wall_sequence == WallSequence::InnerOuterInner ? L("Inner/Outer/Inner") : L("Odd-Even"),
+                                         _wall_sequence == WallSequence::InnerOuterInner ? "" : L("To ensure rigidity and solidity, it is recommended to use 5 or more perimeters. "));
+                motion_warning.opt_key = "wall_loops";
+            }
 
             // check wall sequence and precise outer wall
             if (m_default_region_config.precise_outer_wall && m_default_region_config.wall_sequence != WallSequence::InnerOuter)

@@ -1420,6 +1420,22 @@ int ConfigManipulation::show_spiral_mode_settings_dialog(bool is_object_config)
     return answer;
 }
 
+int ConfigManipulation::show_staggered_perimeter_settings_dialog()
+{
+    wxString msg_text = _(L("Staggered perimeters is an experimental feature and only works when the First layer height is the same as Layer height, Top surface line width is the same as Outer wall line width and only for Arachne"));
+    msg_text += "\n\n" + _(L("Change these settings automatically? \n"
+        "Yes - Change these settings and enable staggered perimeters\n"
+        "No  - Give up using staggered perimeters this time"));
+
+    MessageDialog dialog(m_msg_dlg_parent, msg_text, "",
+        wxICON_WARNING | wxYES | wxNO);
+
+    is_msg_dlg_already_exist = true;
+    auto answer = dialog.ShowModal();
+    is_msg_dlg_already_exist = false;
+    return answer;
+}
+
 bool ConfigManipulation::get_temperature_range(DynamicPrintConfig *config, int &range_low, int &range_high, unsigned int variant_index)
 {
     bool range_low_exist = false, range_high_exist = false;
