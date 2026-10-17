@@ -12,7 +12,7 @@ static bool operator<(wxColour const &l, wxColour const &r) { return l.GetRGBA()
 
 static std::map<wxColour, wxColour> gDarkColors{
     {"#B13CFF", "#8E2FBF"}, // rgb(177, 60, 255)    ORCA color
-    {"#1F8EEA", "#2778D2"}, // rgb(31, 142, 234)   ???
+    {"#1F8EEA", "#B13CFF"}, // rgb(31, 142, 234)   ??? - ORCA changed dark mode to purple
     {"#FF6F00", "#D15B00"}, // rgb(255, 111, 0)    Secondary color
     {"#D01B1B", "#BB2A3A"}, // rgb(208, 27, 27)    ???
     {"#262E30", "#EFEFF0"}, // rgb(38, 46, 48)     Button text color | Input Text Color

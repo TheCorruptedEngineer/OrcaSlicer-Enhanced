@@ -61,8 +61,8 @@ body
 /*-----Right Top MenuBtn-----*/
 .MenuItem:hover
 {
-	border-color: #8E2FBF;
-	background-color: #3C2263;
+	border-color: #8E2FBF; /*Purple color, dark*/
+	background-color: #322852; /*Purple color with %10 opacity, dark*/
 }
 
 .FileImg

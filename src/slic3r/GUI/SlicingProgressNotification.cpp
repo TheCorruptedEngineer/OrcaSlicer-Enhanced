@@ -418,7 +418,7 @@ void NotificationManager::SlicingProgressNotification::render_show_dailytips(con
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.0f, .0f, .0f, .0f));
 	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.0f, .0f, .0f, .0f));
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.0f, .0f, .0f, .0f));
-	ImGui::PushStyleColor(ImGuiCol_Text, ImColor(31, 142, 234).Value);
+	ImGui::PushStyleColor(ImGuiCol_Text, ImColor(177, 60, 255).Value);
 
 	ImGui::SetCursorScreenPos(pos);
 	std::wstring button_text;
@@ -433,7 +433,7 @@ void NotificationManager::SlicingProgressNotification::render_show_dailytips(con
 		lineEnd.y -= 2;
 		ImVec2 lineStart = lineEnd;
 		lineStart.x = ImGui::GetItemRectMin().x;
-		ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd, ImColor(31, 142, 234));
+		ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd, ImColor(177, 60, 255));
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 			on_show_dailytips();
