@@ -1,3 +1,18 @@
+# Orca Enhanced (OrcaSlicer-Enhanced)
+
+**An unofficial fork of [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer).** Do not report bugs you find
+here to the OrcaSlicer project. It tracks OrcaSlicer `main` directly and adds:
+
+- a purple accent theme (#B13CFF), applied by `scripts/purple_theme.py`
+- **continuous walls across modifiers**: a modifier that only changes the wall count no longer leaves a seam
+  and a double wall along its boundary (Strength → Walls, on by default, classic and Arachne)
+- **wave overhangs**, **staggered perimeters** and **odd-even wall order**, ported from
+  [NanashiTheNameless/OrcaSlicer](https://github.com/NanashiTheNameless/OrcaSlicer)
+
+Everything below is OrcaSlicer's own README.
+
+---
+
 <div align="center">
 
 <picture>
