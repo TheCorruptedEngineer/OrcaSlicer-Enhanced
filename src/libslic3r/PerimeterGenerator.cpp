@@ -12,6 +12,7 @@
 #include "Polyline.hpp"
 #include "Point.hpp"
 #include "Flow.hpp"
+#include "Print.hpp"
 #include "PrintConfig.hpp"
 #include "ShortestPath.hpp"
 #include "Surface.hpp"
@@ -518,7 +519,7 @@ private:
 // (clip_extrusion() interpolates it at the cuts) and both are restored from it.
 static Polylines intersection_pl_in_order(const Polyline &polyline, const Polygons &area)
 {
-    ClipperLib_Z::Path subject;
+    ClipperZUtils::ZPath subject;
     subject.reserve(polyline.size());
     double distance = 0.;
     for (size_t i = 0; i < polyline.size(); ++ i) {
@@ -527,31 +528,31 @@ static Polylines intersection_pl_in_order(const Polyline &polyline, const Polygo
         // clip_extrusion() takes Z > 0 for subject points and Z == 0 for clip points.
         subject.emplace_back(polyline.points[i].x(), polyline.points[i].y(), coord_t(distance) + 1);
     }
-    ClipperLib_Z::Paths clip;
+    ClipperZUtils::ZPaths clip;
     clip.reserve(area.size());
     for (const Polygon &polygon : area) {
-        ClipperLib_Z::Path &path = clip.emplace_back();
+        ClipperZUtils::ZPath &path = clip.emplace_back();
         path.reserve(polygon.size());
         for (const Point &pt : polygon.points)
             path.emplace_back(pt.x(), pt.y(), 0);
     }
 
-    ClipperLib_Z::Paths pieces = clip_extrusion(subject, clip, ClipperLib_Z::ctIntersection);
-    for (ClipperLib_Z::Path &piece : pieces)
+    ClipperZUtils::ZPaths pieces = clip_extrusion(subject, clip, ctIntersection);
+    for (ClipperZUtils::ZPath &piece : pieces)
         if (piece.size() >= 2 && piece.front().z() > piece.back().z())
             std::reverse(piece.begin(), piece.end());
-    std::sort(pieces.begin(), pieces.end(), [](const ClipperLib_Z::Path &a, const ClipperLib_Z::Path &b) {
+    std::sort(pieces.begin(), pieces.end(), [](const ClipperZUtils::ZPath &a, const ClipperZUtils::ZPath &b) {
         return a.empty() || (! b.empty() && a.front().z() < b.front().z());
     });
 
     Polylines out;
     out.reserve(pieces.size());
-    for (const ClipperLib_Z::Path &piece : pieces) {
+    for (const ClipperZUtils::ZPath &piece : pieces) {
         if (piece.size() < 2)
             continue;
         Polyline &pl = out.emplace_back();
         pl.points.reserve(piece.size());
-        for (const ClipperLib_Z::IntPoint &pt : piece)
+        for (const ClipperZUtils::ZPoint &pt : piece)
             pl.points.emplace_back(pt.x(), pt.y());
     }
     return out;
