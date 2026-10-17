@@ -350,7 +350,7 @@ AboutDialog::AboutDialog()
               (boost::format(
               "<html>"
               "<body bgcolor= \"" + bgr_clr_str + "\" >"
-              "<p style=\"text-align:left\"><a style=\"color:#B13CFF\" href=\"https://www.orcaslicer.com\">https://www.orcaslicer.com</ a></p>"
+              "<p style=\"text-align:left\"><a style=\"color:#B13CFF\" href=\"https://github.com/TheCorruptedEngineer/Purple-OrcaSlicer\">https://github.com/TheCorruptedEngineer/Purple-OrcaSlicer</ a></p>"
               "</body>"
               "</html>")
             ).str());
