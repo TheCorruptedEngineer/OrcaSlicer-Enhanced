@@ -98,7 +98,7 @@ void TextureProjectorFrame::on_paint(wxPaintEvent &)
 
     // The border is the projection's hard edge, so it is drawn explicitly - with the window
     // translucent, the native frame alone reads poorly against a busy 3D scene.
-    dc.SetPen(wxPen(wxColour(0, 200, 180), 2));
+    dc.SetPen(wxPen(wxColour(177, 60, 255), 2));
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
     dc.DrawRectangle(0, 0, sz.x, sz.y);
 }

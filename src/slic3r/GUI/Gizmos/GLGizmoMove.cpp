@@ -361,7 +361,7 @@ void GLGizmoMove3D::render_align_preview()
     const BoundingBoxf3     box    = m_object_manipulation->get_align_to_parent() ? helper.get_parent_box() : helper.get_items_box();
     if (!box.defined)
         return;
-    m_parent.get_selection().render_bounding_box(box, {0.0f, 150.0f / 255.0f, 136.0f / 255.0f}, m_parent.get_scale());
+    m_parent.get_selection().render_bounding_box(box, {177.f / 255.f, 60.f / 255.f, 255.f / 255.f}, m_parent.get_scale());
 
     GLShaderProgram* shader = wxGetApp().get_shader("flat");
     if (shader == nullptr)
