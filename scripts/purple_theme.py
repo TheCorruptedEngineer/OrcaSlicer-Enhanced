@@ -32,7 +32,8 @@ SUFFIXES = {".cpp", ".hpp", ".h", ".c", ".svg", ".html", ".htm", ".css", ".js", 
 # Teal that is print data or someone else's artwork, not our chrome.
 EXCLUDE = (
     "src/libslic3r/PresetBundle.cpp",   # #26A69A is the default filament colour written into projects
-    "src/slic3r/GUI/Plater.cpp",        # the filament swatch palette
+    # Not Plater.cpp: its filament swatch palette (#00C1AE, ...) holds no palette colour, and the rest of the file
+    # is UI chrome (popup and search borders, sync button, input hover/focus) that has to turn purple.
     "resources/profiles/*",             # vendor bed textures
     "resources/flush/*",                # filament colour data
 )
@@ -241,7 +242,8 @@ SCAN_IGNORE = (
     "src/slic3r/GUI/AMSMaterialsSetting.cpp",              # default filament colours
     "src/slic3r/GUI/ProgressStatusBar.cpp",                # {-1, 150, 155} are field widths
 )
-SCAN_IGNORE_COLOURS = {"#00FFFF", "(0, 255, 255)"}         # pure cyan: CMYW pigment, AMS test colours
+SCAN_IGNORE_COLOURS = {"#00FFFF", "(0, 255, 255)",         # pure cyan: CMYW pigment, AMS test colours
+                       "#00C1AE"}                          # Plater.cpp's first filament swatch
 
 
 def scan() -> int:
