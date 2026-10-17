@@ -1077,17 +1077,17 @@ BlockWalls block_walls(const Layer &layer)
 
 // A modifier that only changes the wall count must not wall off its boundary: the walls both halves share run
 // around the block as if there was no modifier, the half asking for more gets its extra walls ending at the
-// boundary, and each half fills from where a plain block with its wall count would. The unchecked option keeps
-// the stock behaviour - one closed set of walls per half, back to back along the boundary - and so does Arachne,
-// which the zones are not implemented for.
+// boundary, and each half fills from where a plain block with its wall count would. Both wall generators do this.
+// The unchecked option keeps the stock behaviour - one closed set of walls per half, back to back along the boundary.
 TEST_CASE("A wall count modifier keeps the walls continuous across its boundary", "[Perimeters]")
 {
-    const char *wall_sequence = GENERATE("inner wall/outer wall", "outer wall/inner wall", "inner-outer-inner wall", "odd-even wall");
-    const auto  walls         = GENERATE(std::make_pair(3, 6), std::make_pair(6, 3));
+    const char *wall_generator = GENERATE("classic", "arachne");
+    const char *wall_sequence  = GENERATE("inner wall/outer wall", "outer wall/inner wall", "inner-outer-inner wall", "odd-even wall");
+    const auto  walls          = GENERATE(std::make_pair(3, 6), std::make_pair(6, 3));
     const int   base_walls = walls.first, modifier_walls = walls.second;
-    CAPTURE(wall_sequence, base_walls, modifier_walls);
+    CAPTURE(wall_generator, wall_sequence, base_walls, modifier_walls);
 
-    auto config_for = [&](const char *wall_generator, bool continuous) {
+    auto config_for = [&](bool continuous) {
         DynamicPrintConfig config = base_config(wall_generator);
         config.set_deserialize_strict({
             { "wall_loops",                base_walls },
@@ -1098,17 +1098,17 @@ TEST_CASE("A wall count modifier keeps the walls continuous across its boundary"
         });
         return config;
     };
-    auto walls_for = [&](const char *wall_generator, bool continuous, int modifier) {
+    auto walls_for = [&](bool continuous, int modifier) {
         Print print;
         Model model;
-        slice_block(print, model, config_for(wall_generator, continuous), modifier);
+        slice_block(print, model, config_for(continuous), modifier);
         REQUIRE_FALSE(print.objects().empty());
         const Layer *layer = layer_at(print, 2.6);
         REQUIRE(layer != nullptr);
         return block_walls(*layer);
     };
 
-    const BlockWalls on = walls_for("classic", true, modifier_walls);
+    const BlockWalls on = walls_for(true, modifier_walls);
     const int left_walls = base_walls, right_walls = modifier_walls;
 
     SECTION("one outer wall around the block") {
@@ -1124,7 +1124,7 @@ TEST_CASE("A wall count modifier keeps the walls continuous across its boundary"
         auto plain_fill_inset = [&](int wall_loops) {
             Print print;
             Model model;
-            DynamicPrintConfig config = config_for("classic", true);
+            DynamicPrintConfig config = config_for(true);
             config.set_deserialize_strict({ { "wall_loops", wall_loops } });
             slice_block(print, model, config, 0);
             const Layer *layer = layer_at(print, 2.6);
@@ -1137,13 +1137,9 @@ TEST_CASE("A wall count modifier keeps the walls continuous across its boundary"
         CHECK_THAT(on.fill_inset_by_walls.at(modifier_walls), Catch::Matchers::WithinAbs(plain_fill_inset(modifier_walls), 0.02));
     }
     SECTION("unchecked, each half closes its own walls along the boundary") {
-        const BlockWalls off = walls_for("classic", false, modifier_walls);
+        const BlockWalls off = walls_for(false, modifier_walls);
         CHECK(off.outer_wall_length > 1.3 * off.outline_length);
         CHECK(off.left_crossings == 2 * left_walls);
         CHECK(off.right_crossings == 2 * right_walls);
-    }
-    SECTION("Arachne keeps one set of walls per half") {
-        const BlockWalls arachne = walls_for("arachne", true, modifier_walls);
-        CHECK(arachne.outer_wall_length > 1.3 * arachne.outline_length);
     }
 }

@@ -6461,7 +6461,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
-    // Orca (Kurisu): see Layer::make_perimeters() and the wall count zones in PerimeterGenerator::process_classic().
+    // Orca (Kurisu): see Layer::make_perimeters() and IslandWallCountZones in PerimeterGenerator.cpp.
     def = this->add("continuous_modifier_walls", coBool);
     def->label = L("Continuous walls across modifiers");
     def->category = L("Strength");
@@ -6470,8 +6470,7 @@ void PrintConfigDef::init_fff_params()
                      "asking for more end at the boundary.\n\n"
                      "When disabled, each zone gets its own closed walls, which leaves a seam on the surface and a double wall "
                      "inside the part along the modifier's boundary.\n\n"
-                     "Works with the Classic wall generator. Modifiers that also change other wall settings, or set 0 walls, "
-                     "keep their own walls.");
+                     "Modifiers that also change other wall settings, or set 0 walls, keep their own walls.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
