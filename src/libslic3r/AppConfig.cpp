@@ -58,7 +58,10 @@ using namespace nlohmann;
 
 namespace Slic3r {
 
-static const std::string VERSION_CHECK_URL = "https://check-version.orcaslicer.com/latest";
+// OrcaSlicer-Enhanced: new versions come from this fork's own GitHub releases (same JSON as the GitHub releases API,
+// which check_new_version_sf() parses). OrcaSlicer's service would offer official builds, and orders a
+// "2.5.0-Kurisu" before "2.5.0-alpha". Profile updates stay with OrcaSlicer: the fork ships its profiles unchanged.
+static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/TheCorruptedEngineer/OrcaSlicer-Enhanced/releases";
 static const std::string PROFILE_UPDATE_URL = "https://check-version.orcaslicer.com/profile";
 
 constexpr const char* CONFIG_ORCA_UPDATER_URL = "orca_updater_url";
