@@ -28,6 +28,9 @@ REPO = Path(__file__).resolve().parent.parent
 # Where the theme lives: UI code, icons, web pages and the vendored ImGui.
 SCOPE = ("src/", "resources/images/", "resources/web/", "deps_src/imgui/")
 SUFFIXES = {".cpp", ".hpp", ".h", ".c", ".svg", ".html", ".htm", ".css", ".js", ".json", ".xml", ".png"}
+# Orca's own artwork outside SCOPE: the logo and corner marks drawn on the build plate of every printer that has
+# no vendor bed texture. The rest of resources/profiles is vendors' artwork (see EXCLUDE).
+EXTRA_FILES = ("resources/profiles/Custom/orcaslicer_bed_texture.svg",)
 
 # Teal that is print data or someone else's artwork, not our chrome.
 EXCLUDE = (
@@ -104,6 +107,8 @@ RULES = _rules()
 
 
 def in_scope(path: str) -> bool:
+    if path in EXTRA_FILES:
+        return True
     return (path.startswith(SCOPE) and Path(path).suffix.lower() in SUFFIXES
             and not any(fnmatch.fnmatch(path, pat) for pat in EXCLUDE))
 

@@ -79,6 +79,10 @@ different SVG per state: purpling `check_on.svg` does nothing for `check_on_focu
 months. The hover teals are lighter shades (`#4db6ac`, `#33aba1`, `#52c7b8`) — all in the palette now. When
 hand-theming anything, check its `_hover` / `_focused` / `_disabled` / `_dark` siblings.
 
+**Outside `src/` and `resources/images|web`**, the script themes only `EXTRA_FILES`: Orca's own build-plate
+artwork, `resources/profiles/Custom/orcaslicer_bed_texture.svg` (logo and corner marks on every printer without a
+vendor bed texture). It was missed once, leaving a teal plate (2026-10-18).
+
 **Do not purple** (the script's `EXCLUDE` / `SCAN_IGNORE`): `PresetBundle.cpp` (`#26A69A` is the default
 filament colour written into projects), `Plater.cpp`'s filament swatch palette, vendor bed textures in
 `resources/profiles`, `resources/flush` colour data, G-code viewer / libslic3r colours, colour pickers, the
