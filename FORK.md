@@ -3,8 +3,11 @@
 What differs in this fork from OrcaSlicer, and how to maintain it. Upstream's own guidance is in `AGENTS.md`.
 
 **The canonical checkout is `C:\Program Files\Purple-OrcaSlicer`.** The folder keeps its old name: both build
-trees hold absolute paths to it, and the `Orca.lnk` desktop shortcut runs `build\src\Release\orca-slicer.exe`
-from here. It is a full source tree built in place, not an install directory. Version `2.5.0-Kurisu`
+trees hold absolute paths to it. It is a full source tree built in place, not an install directory: the desktop
+shortcut `Orca.lnk` and the Start-menu `OrcaSlicer\Orca.lnk` both run `build\src\Release\orca-slicer.exe`
+(start-in folder `build\src\Release`), so every build is live at the next start (verified 2026-10-18). The app
+code is `OrcaSlicer.dll`; `orca-slicer.exe` is a thin launcher that only relinks when its own sources change,
+so judge a build by the DLL's timestamp. Version `2.5.0-Kurisu`
 (`version.inc`, `SoftFever_VERSION`): upstream bumps the number, the fork keeps the `-Kurisu` suffix. The app's
 internal key stays `OrcaSlicer` (`SLIC3R_APP_KEY`), so it shares `%APPDATA%\OrcaSlicer` (presets, printers) with
 stock Orca; renaming it would strand the owner's presets.
@@ -206,12 +209,14 @@ same figure (7.8 mm); staggered perimeters under Arachne keeps 5.7 mm.
 
 ## Status / open items (2026-10-18)
 
-- The rebuilt line is branch `upstream-rebase`, pushed as `main` of OrcaSlicer-Enhanced; local `main` still
-  points at the old line. Once the owner has tried the new build: `git branch -f main upstream-rebase`.
+- Published: `TheCorruptedEngineer/OrcaSlicer-Enhanced` `main` = local branch `upstream-rebase`. Publish with
+  `git push origin upstream-rebase:main`, a fast-forward (merge upstream first; never force-push `main`).
+  Local `main` still points at the old line; once the owner has tried the new build:
+  `git branch -f main upstream-rebase`, then work on `main`.
 - The README is upstream's with a fork banner on top; it has no fork download links yet. Publishing a
-  `2.5.0-Kurisu` release is the owner's call.
-- Desktop shortcut "Orca (Kurisu old)" runs a copy of the pre-rebuild build from
-  `C:\Users\AdministratorCorrupt\OrcaSlicer-Kurisu-old`; delete both once the new build has proven itself.
+  `2.5.0-Kurisu` release is the owner's call; the in-app update check reads this repo's releases.
+- `C:\Users\AdministratorCorrupt\OrcaSlicer-Kurisu-old` (~0.5 GB) is a runnable copy of the pre-rebuild build
+  (its shortcut is gone; run its `orca-slicer.exe`). Delete it once the new build has proven itself.
 - Considered next: an accent colour selectable in Preferences (default = this purple). Plan: have
   `purple_theme.py` write accessor calls instead of literals so upstream merges stay conflict-free; icons via
   `BitmapCache`'s recolour table; web pages via CSS variables.
