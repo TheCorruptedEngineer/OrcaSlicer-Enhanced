@@ -26,7 +26,8 @@ OrcaSlicer `main` plus, as separate commits on top of it:
 
 Until 2026-10-16 the fork was `Purple-OrcaSlicer`, a branch of Nanashi's fork of OrcaSlicer, updated by merging
 `nanashi/main`. On 2026-10-17 it was rebuilt directly on OrcaSlicer `main` (`82aee1abdd`) as the commits above
-and published as a fresh fork of OrcaSlicer/OrcaSlicer, `TheCorruptedEngineer/OrcaSlicer-Enhanced`. The old
+and published as a fresh fork of OrcaSlicer/OrcaSlicer, `TheCorruptedEngineer/OrcaSlicer-Enhanced`, after merging
+OrcaSlicer main up to `1ee0b730a1`. The old
 line, with its V2.4.0-Kurisu and V2.5.0-Kurisu (draft) releases, is kept in the plain repo
 `TheCorruptedEngineer/Purple-OrcaSlicer-backup`, and locally at `backup-pre-rebase-20261016` (`45eb89cb41`).
 
@@ -120,7 +121,7 @@ call build_win.bat -h            &:: everything else (-D dry run, --slicer-targe
 - Never edit source while a build is running. Never regex-edit source from PowerShell (it has mojibaked
   `mm/s²`, `°C` and em-dashes here before); detect with `rg 'Â[°²³]|â€[""”“–—]|âŒ˜' src/`.
 
-Tests: `ctest -C Release` from `build\` (2,308 tests pass as of 2026-10-17). The fork's own test is in
+Tests: `ctest -C Release` from `build\` (2,317 tests pass as of 2026-10-18, on OrcaSlicer main `1ee0b730a1`). The fork's own test is in
 `tests/fff_print/test_perimeters.cpp` (`fff_print_tests.exe "[Perimeters]"`).
 
 **Slicing from the command line** (`orca-slicer.exe --slice 0 --outputdir OUT project.3mf`): since OrcaSlicer
@@ -205,8 +206,8 @@ same figure (7.8 mm); staggered perimeters under Arachne keeps 5.7 mm.
 
 ## Status / open items (2026-10-18)
 
-- The rebuilt line is branch `upstream-rebase`; local `main` still points at the old line. Once the owner has
-  tried the new build: `git branch -f main upstream-rebase`.
+- The rebuilt line is branch `upstream-rebase`, pushed as `main` of OrcaSlicer-Enhanced; local `main` still
+  points at the old line. Once the owner has tried the new build: `git branch -f main upstream-rebase`.
 - The README is upstream's with a fork banner on top; it has no fork download links yet. Publishing a
   `2.5.0-Kurisu` release is the owner's call.
 - Desktop shortcut "Orca (Kurisu old)" runs a copy of the pre-rebuild build from
